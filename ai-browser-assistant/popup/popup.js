@@ -1,26 +1,68 @@
 // ─────────────────────────────────────────────────────────────
-// POPUP SETTINGS — Load / Save + Password Toggle
+// POPUP SETTINGS — Load / Save + Password Toggles + Open Panel
+// Dual-model pipeline: nimReasoningModel + nimVisionModel
+// Three providers: NIM, Ollama Cloud, Local Ollama
 // ─────────────────────────────────────────────────────────────
 
-// Load saved settings on open
+// ── Model status updater (pair hint + key status) ────────────
+
+function updateModelStatus() {
+  const r = document.getElementById("reasoning-model-select").value;
+  const v = document.getElementById("vision-model-select").value;
+  const pairHint  = document.getElementById("pair-hint");
+  const keyStatus = document.getElementById("key-status");
+
+  // Pair hint (unified vs dual)
+  if (r === v) {
+    pairHint.textContent = "✅ Unified mode: single model handles planning and vision";
+    pairHint.style.color = "#10B981";
+  } else {
+    pairHint.textContent = "🔀 Dual mode: two separate API calls per screenshot analysis";
+    pairHint.style.color = "#6B7280";
+  }
+
+  // Key status — tell user which key they need
+  function keyNeeded(modelId) {
+    if (modelId.startsWith("ollama-cloud/")) return "☁️ Requires: Ollama Cloud API key";
+    if (modelId.startsWith("ollama/"))       return "🖥️ Local only: no API key needed";
+    return "⚡ Requires: NVIDIA NIM API key";
+  }
+
+  const rNeeded = keyNeeded(r);
+  const vNeeded = keyNeeded(v);
+  keyStatus.textContent = r === v
+    ? rNeeded
+    : `Reasoning → ${rNeeded}   |   Vision → ${vNeeded}`;
+}
+
+// ── Load saved settings on open ──────────────────────────────
+
 chrome.storage.sync.get(
-  ["nimApiKey", "perplexityApiKey", "nimModel", "nimMaxTokens", "confirmForms", "confirmNav"],
+  [
+    "nimApiKey", "ollamaCloudApiKey",
+    "nimReasoningModel", "nimVisionModel",
+    "nimMaxTokens", "confirmForms", "confirmNav",
+  ],
   (data) => {
     if (data.nimApiKey) document.getElementById("api-key").value = data.nimApiKey;
-    if (data.perplexityApiKey) document.getElementById("perplexity-api-key").value = data.perplexityApiKey;
-    if (data.nimModel) document.getElementById("model-select").value = data.nimModel;
+    if (data.ollamaCloudApiKey) document.getElementById("ollama-cloud-key").value = data.ollamaCloudApiKey;
+    if (data.nimReasoningModel) document.getElementById("reasoning-model-select").value = data.nimReasoningModel;
+    if (data.nimVisionModel) document.getElementById("vision-model-select").value = data.nimVisionModel;
     if (data.nimMaxTokens) document.getElementById("max-tokens").value = data.nimMaxTokens;
     document.getElementById("confirm-forms").checked = data.confirmForms !== false;
     document.getElementById("confirm-nav").checked = data.confirmNav === true;
+    updateModelStatus();
   }
 );
 
-// Save settings
+// ── Save settings ────────────────────────────────────────────
+
 document.getElementById("save-btn").addEventListener("click", () => {
   const settings = {
     nimApiKey: document.getElementById("api-key").value.trim(),
-    perplexityApiKey: document.getElementById("perplexity-api-key").value.trim(),
-    nimModel: document.getElementById("model-select").value,
+    ollamaCloudApiKey: document.getElementById("ollama-cloud-key").value.trim(),
+    nimReasoningModel: document.getElementById("reasoning-model-select").value,
+    nimVisionModel: document.getElementById("vision-model-select").value,
     nimMaxTokens: parseInt(document.getElementById("max-tokens").value),
     confirmForms: document.getElementById("confirm-forms").checked,
     confirmNav: document.getElementById("confirm-nav").checked,
@@ -29,11 +71,14 @@ document.getElementById("save-btn").addEventListener("click", () => {
   chrome.storage.sync.set(settings, () => {
     const statusEl = document.getElementById("status");
     statusEl.classList.add("visible");
-    setTimeout(() => { statusEl.classList.remove("visible"); }, 2200);
+    setTimeout(() => {
+      statusEl.classList.remove("visible");
+    }, 2200);
   });
 });
 
-// Password show/hide toggles
+// ── Password show/hide toggles ───────────────────────────────
+
 function setupToggle(toggleId, inputId) {
   const toggle = document.getElementById(toggleId);
   const input = document.getElementById(inputId);
@@ -45,10 +90,16 @@ function setupToggle(toggleId, inputId) {
 }
 
 setupToggle("toggle-key", "api-key");
-setupToggle("toggle-pplx-key", "perplexity-api-key");
+setupToggle("toggle-ollama-cloud-key", "ollama-cloud-key");
 
-// Open Side Panel button
+// ── Model select change handlers ─────────────────────────────
+
+document.getElementById("reasoning-model-select").addEventListener("change", updateModelStatus);
+document.getElementById("vision-model-select").addEventListener("change", updateModelStatus);
+
+// ── Open Side Panel button ───────────────────────────────────
+
 document.getElementById("open-panel-btn").addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "OPEN_SIDEPANEL" });
-  window.close(); // Close popup after opening side panel
+  window.close();
 });

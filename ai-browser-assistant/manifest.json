@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "NIM Browser Assistant",
   "version": "1.0.0",
-  "description": "Perplexity Comet-style AI assistant powered by NVIDIA NIM",
+  "description": "AI browser assistant powered by NVIDIA NIM and Ollama Cloud",
 
   "permissions": [
     "activeTab",
@@ -11,7 +11,8 @@
     "storage",
     "sidePanel",
     "contextMenus",
-    "notifications"
+    "notifications",
+    "debugger"
   ],
 
   "host_permissions": ["<all_urls>"],

@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
    NIM Browser Assistant — Marble × Turquoise Design System
-   Claude Cowork-inspired premium AI workspace aesthetic
+   Premium AI workspace aesthetic
    ═══════════════════════════════════════════════════════════ */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -241,7 +241,6 @@ body {
 .message.error .message-label { color: var(--error); }
 
 /* ── THINKING INDICATOR ─────────────────────────────────── */
-/* FIX: Shown immediately when agent starts — no blank screen gap */
 .thinking-bubble {
   background: var(--bg-card);
   border: 1px solid var(--marble-vein);

@@ -56,6 +56,7 @@
       box-shadow: 0 0 0 3px var(--turq-glow), 0 0 12px rgba(11,197,234,0.15);
     }
     input::placeholder { color: var(--text-muted); }
+    select optgroup { font-weight: 600; font-size: 12px; }
     .toggle-vis {
       position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
       background: none; border: none; cursor: pointer; color: var(--turq);
@@ -69,6 +70,16 @@
     .hint a { color: var(--turq-deep); text-decoration: none; }
     .hint a:hover { text-decoration: underline; }
     .separator { border: none; border-top: 1px solid var(--marble-vein); margin: 20px 0; }
+    .pair-hint {
+      font-size: 12px; font-weight: 500; margin: 8px 0 6px;
+      padding: 7px 12px; border-radius: var(--radius-md);
+      background: var(--bg-subtle); text-align: center;
+      transition: all 0.2s var(--ease);
+    }
+    .key-status {
+      font-size: 11px; margin-top: 8px; padding: 6px 10px;
+      border-radius: 6px; background: var(--bg-subtle); color: var(--text-secondary);
+    }
     .checkbox-row {
       display: flex; align-items: center; gap: 8px;
       font-size: 13px; color: var(--text-primary); margin-top: 6px; cursor: pointer;
@@ -119,44 +130,143 @@
     </svg>
     <h2>NIM Assistant Settings</h2>
   </div>
-  <div class="settings-subtitle">Powered by NVIDIA NIM API</div>
+  <div class="settings-subtitle">Dual-Model Vision + Reasoning Pipeline &nbsp;·&nbsp; NIM + Ollama Cloud + Local</div>
 
   <button class="open-panel-btn" id="open-panel-btn">💬 Open Side Panel Chat</button>
 
   <hr class="separator" />
 
+  <!-- ── API Keys ──────────────────────────────────────────── -->
+
   <div class="field">
-    <label class="field-label">NVIDIA API Key</label>
+    <label class="field-label">NVIDIA NIM API Key</label>
     <div class="input-group">
       <input type="password" id="api-key" placeholder="nvapi-xxxxxxxxxxxxxxxxxxxx" />
       <button class="toggle-vis" id="toggle-key" type="button" aria-label="Toggle key visibility">👁</button>
     </div>
-    <div class="hint">Get your free key at <a href="https://build.nvidia.com" target="_blank">build.nvidia.com</a></div>
+    <div class="hint">Required for <strong>NIM</strong> models. <a href="https://build.nvidia.com" target="_blank">Get key →</a></div>
   </div>
 
   <div class="field">
-    <label class="field-label">Perplexity API Key</label>
+    <label class="field-label">Ollama Cloud API Key</label>
     <div class="input-group">
-      <input type="password" id="perplexity-api-key" placeholder="pplx-xxxxxxxxxxxxxxxxxxxx" />
-      <button class="toggle-vis" id="toggle-pplx-key" type="button" aria-label="Toggle key visibility">👁</button>
+      <input type="password" id="ollama-cloud-key" placeholder="Get key at ollama.com/settings/keys" />
+      <button class="toggle-vis" id="toggle-ollama-cloud-key" type="button" aria-label="Toggle key visibility">👁</button>
     </div>
-    <div class="hint">Enables the web_search tool for real-time info</div>
-  </div>
-
-  <div class="field">
-    <label class="field-label">AI Model</label>
-    <select id="model-select">
-      <option value="meta/llama-3.3-70b-instruct">Llama 3.3 70B Instruct — Best overall ⭐</option>
-      <option value="meta/llama-3.1-8b-instruct">Llama 3.1 8B Instruct — Fastest</option>
-      <option value="meta/llama-4-maverick-17b-128e-instruct">Llama 4 Maverick 17B</option>
-      <option value="nvidia/llama-3.1-nemotron-70b-instruct">Nemotron 70B — Reasoning</option>
-      <option value="qwen/qwen2.5-coder-32b-instruct">Qwen 2.5 Coder 32B</option>
-      <option value="ollama/llama3">Local — Ollama Llama3</option>
-      <option value="ollama/mistral">Local — Ollama Mistral</option>
-    </select>
+    <div class="hint">Required for <strong>ollama-cloud/</strong> models. Free tier included. <a href="https://ollama.com/settings/keys" target="_blank">Get key →</a></div>
   </div>
 
   <hr class="separator" />
+
+  <!-- ── Model Selection ───────────────────────────────────── -->
+
+  <div class="field">
+    <label class="field-label">Reasoning Model — Plans actions & calls tools</label>
+    <select id="reasoning-model-select">
+      <!-- ── Ollama Cloud — Agentic (recommended) ──────────── -->
+      <optgroup label="☁️ Ollama Cloud — Agentic">
+        <option value="ollama-cloud/kimi-k2-thinking" selected>
+          Kimi K2 Thinking — Best agentic ⭐ (200-300 tool calls, BrowseComp SOTA)
+        </option>
+        <option value="ollama-cloud/kimi-k2.5">
+          Kimi K2.5 — Vision + agentic (multimodal, agent swarm)
+        </option>
+        <option value="ollama-cloud/qwen3.5:35b">
+          Qwen 3.5 35B — Vision + tools + thinking
+        </option>
+        <option value="ollama-cloud/devstral-small-2">
+          Devstral Small 2 — 24B vision + tools (software agents)
+        </option>
+        <option value="ollama-cloud/nemotron-3-nano">
+          Nemotron 3 Nano — NVIDIA 30B agentic
+        </option>
+        <option value="ollama-cloud/qwen3-next:80b">
+          Qwen 3 Next 80B — Tools + thinking
+        </option>
+        <option value="ollama-cloud/ministral-3:8b">
+          Ministral 3 8B — Fast vision + tools
+        </option>
+        <option value="ollama-cloud/gpt-oss:120b">
+          GPT-OSS 120B — OpenAI open-weight
+        </option>
+      </optgroup>
+      <!-- ── NVIDIA NIM ────────────────────────────────────── -->
+      <optgroup label="⚡ NVIDIA NIM">
+        <option value="meta/llama-3.3-70b-instruct">
+          Llama 3.3 70B — Best NIM reasoning ⭐
+        </option>
+        <option value="meta/llama-3.1-8b-instruct">
+          Llama 3.1 8B — Fastest NIM
+        </option>
+        <option value="meta/llama-4-scout-17b-16e-instruct">
+          Llama 4 Scout 17B — Unified vision+tools
+        </option>
+        <option value="meta/llama-4-maverick-17b-128e-instruct">
+          Llama 4 Maverick — Unified premium
+        </option>
+        <option value="nvidia/llama-3.1-nemotron-70b-instruct">
+          Nemotron 70B — Deep NIM reasoning
+        </option>
+      </optgroup>
+      <!-- ── Local Ollama ──────────────────────────────────── -->
+      <optgroup label="🖥️ Local Ollama">
+        <option value="ollama/llama3">Ollama — Llama3 (local)</option>
+        <option value="ollama/mistral">Ollama — Mistral (local)</option>
+      </optgroup>
+    </select>
+  </div>
+
+  <div id="pair-hint" class="pair-hint">🔀 Dual mode: two separate API calls per screenshot analysis</div>
+
+  <div class="field">
+    <label class="field-label">Vision Model — Analyzes screenshots</label>
+    <select id="vision-model-select">
+      <!-- ── Ollama Cloud — Vision ─────────────────────────── -->
+      <optgroup label="☁️ Ollama Cloud — Vision">
+        <option value="ollama-cloud/kimi-k2.5" selected>
+          Kimi K2.5 — Native multimodal agentic ⭐
+        </option>
+        <option value="ollama-cloud/qwen3.5:35b">
+          Qwen 3.5 35B — Vision + tools + thinking
+        </option>
+        <option value="ollama-cloud/qwen3-vl:30b">
+          Qwen 3 VL 30B — Strongest Qwen vision
+        </option>
+        <option value="ollama-cloud/devstral-small-2">
+          Devstral Small 2 — Vision + tools
+        </option>
+        <option value="ollama-cloud/ministral-3:8b">
+          Ministral 3 8B — Fast vision
+        </option>
+      </optgroup>
+      <!-- ── NVIDIA NIM ────────────────────────────────────── -->
+      <optgroup label="⚡ NVIDIA NIM">
+        <option value="meta/llama-3.2-90b-vision-instruct">
+          Llama 3.2 90B Vision — Best NIM VLM ⭐
+        </option>
+        <option value="meta/llama-3.2-11b-vision-instruct">
+          Llama 3.2 11B Vision — Fast NIM VLM
+        </option>
+        <option value="meta/llama-4-scout-17b-16e-instruct">
+          Llama 4 Scout 17B — Unified
+        </option>
+        <option value="meta/llama-4-maverick-17b-128e-instruct">
+          Llama 4 Maverick — Unified premium
+        </option>
+      </optgroup>
+      <!-- ── Local Ollama ──────────────────────────────────── -->
+      <optgroup label="🖥️ Local Ollama">
+        <option value="ollama/llava">Ollama — LLaVA (local)</option>
+      </optgroup>
+    </select>
+    <div class="hint">Set same as reasoning model to use unified multimodal mode</div>
+  </div>
+
+  <div id="key-status" class="key-status"></div>
+
+  <hr class="separator" />
+
+  <!-- ── Other Settings ────────────────────────────────────── -->
 
   <div class="field">
     <label class="field-label">Max Tokens per Response</label>
@@ -182,9 +292,11 @@
   <div id="status" class="status">✅ Settings saved!</div>
 
   <div class="footer-links">
+    <a href="https://ollama.com/search?c=cloud" target="_blank">Ollama Cloud Models</a>
+    &nbsp;·&nbsp;
     <a href="https://docs.api.nvidia.com/nim/reference/llm-apis" target="_blank">NIM API Docs</a>
     &nbsp;·&nbsp;
-    <a href="https://build.nvidia.com/explore/reasoning" target="_blank">Browse All Models</a>
+    <a href="https://build.nvidia.com/explore/reasoning" target="_blank">Browse NIM Models</a>
   </div>
 
   <script src="popup.js"></script>
