@@ -1,7 +1,8 @@
 // ─────────────────────────────────────────────────────────────
 // SIDE PANEL JAVASCRIPT
-// Single-pane architecture with streaming, tool events, and
-// thinking indicator support. Multi-provider badge display.
+// Single-pane architecture with streaming, tool events,
+// thinking indicator, progress tracking, and stop support.
+// Multi-provider badge display.
 // ─────────────────────────────────────────────────────────────
 
 // ── DOM REFS ─────────────────────────────────────────────────
@@ -49,12 +50,13 @@ const TOOL_ICONS = {
   cdp_click:          "🖱️",
   cdp_type:           "⌨️",
   cdp_key:            "🔑",
+  task_complete:      "✅",
 };
 
 // ── MODEL LABELS MAP ──────────────────────────────────────────
 
 const MODEL_LABELS = {
-  // NIM models
+  // NIM models — Meta/Llama
   "meta/llama-3.3-70b-instruct":               "Llama 3.3 70B",
   "meta/llama-3.1-8b-instruct":                "Llama 3.1 8B",
   "meta/llama-4-maverick-17b-128e-instruct":   "Llama 4 Maverick",
@@ -62,6 +64,14 @@ const MODEL_LABELS = {
   "nvidia/llama-3.1-nemotron-70b-instruct":    "Nemotron 70B",
   "meta/llama-3.2-90b-vision-instruct":        "Llama 3.2 90B Vision",
   "meta/llama-3.2-11b-vision-instruct":        "Llama 3.2 11B Vision",
+  // NIM models — Kimi (Moonshot AI)
+  "moonshotai/kimi-k2-thinking":               "Kimi K2 Thinking ⚡",
+  "moonshotai/kimi-k2.5":                      "Kimi K2.5 ⚡",
+  "moonshotai/kimi-k2-instruct":               "Kimi K2 Instruct ⚡",
+  "moonshotai/kimi-k2-instruct-0905":          "Kimi K2 Instruct 0905 ⚡",
+  // NIM models — MiniMax
+  "minimaxai/minimax-m2.5":                    "MiniMax M2.5 ⚡",
+  "minimaxai/minimax-m2.1":                    "MiniMax M2.1 ⚡",
   // Local Ollama
   "ollama/llama3":                             "Ollama Llama3",
   "ollama/mistral":                            "Ollama Mistral",
@@ -91,6 +101,7 @@ function getProviderIcon(modelId) {
 let isAgentRunning = false;
 let currentTextEl  = null;
 let thinkingEl     = null;
+let progressEl     = null;
 let toolElements   = {};
 let lastToolEl     = null;
 let lastToolName   = null;
@@ -161,6 +172,31 @@ function removeThinking() {
     thinkingEl.parentNode.removeChild(thinkingEl);
   }
   thinkingEl = null;
+}
+
+// ── PROGRESS INDICATOR ────────────────────────────────────────
+
+function showProgress(step, maxSteps) {
+  if (!progressEl) {
+    progressEl = document.createElement("div");
+    progressEl.className = "progress-indicator";
+    messagesEl.appendChild(progressEl);
+  }
+
+  const pct = Math.round((step / maxSteps) * 100);
+  progressEl.innerHTML = `
+    <div class="progress-bar-track">
+      <div class="progress-bar-fill" style="width: ${pct}%"></div>
+    </div>
+    <span class="progress-text">Step ${step}/${maxSteps}</span>`;
+  scrollToBottom();
+}
+
+function removeProgress() {
+  if (progressEl && progressEl.parentNode) {
+    progressEl.parentNode.removeChild(progressEl);
+  }
+  progressEl = null;
 }
 
 // ── STREAMING ─────────────────────────────────────────────────
@@ -256,6 +292,7 @@ function setLoading(loading) {
     sendBtn.disabled = false;
     sendIcon.innerHTML = SEND_SVG;
     header.classList.remove("agent-active");
+    removeProgress();
   }
 }
 
@@ -267,6 +304,7 @@ function showWelcome() {
     "👋 Hi! I'm your NIM Browser Assistant powered by NVIDIA.\n\n" +
       "I use real mouse & keyboard events (CDP) to control any webpage,\n" +
       "including YouTube, Google, React apps, and more.\n\n" +
+      "I can handle long multi-step tasks (up to 50 steps)!\n\n" +
       'Try:\n• "Play the latest video from Ashish Chanchlani on YouTube"\n• "Search for mechanical keyboards on Amazon and open the first result"\n• "Fill out the contact form on this page"\n• "Summarize this page"'
   );
 }
@@ -303,6 +341,18 @@ async function sendMessage() {
   }
 }
 
+// ── STOP AGENT ────────────────────────────────────────────────
+
+async function stopAgent() {
+  try {
+    await chrome.runtime.sendMessage({ type: "STOP_AGENT" });
+  } catch (e) { /* ignore */ }
+  finalizeStream();
+  removeThinking();
+  removeProgress();
+  setLoading(false);
+}
+
 // ── AGENT UPDATE RECEIVER ─────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg) => {
@@ -312,6 +362,11 @@ chrome.runtime.onMessage.addListener((msg) => {
 
   if (evt === "thinking") {
     showThinking();
+    return;
+  }
+
+  if (evt === "progress") {
+    showProgress(msg.step, msg.maxSteps);
     return;
   }
 
@@ -342,6 +397,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (evt === "done") {
     finalizeStream();
     removeThinking();
+    removeProgress();
     setLoading(false);
     return;
   }
@@ -349,6 +405,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (evt === "error") {
     finalizeStream();
     removeThinking();
+    removeProgress();
     addMessage("assistant", msg.message || "An unknown error occurred.", "error");
     setLoading(false);
     return;
@@ -359,9 +416,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 sendBtn.addEventListener("click", () => {
   if (isAgentRunning) {
-    finalizeStream();
-    removeThinking();
-    setLoading(false);
+    stopAgent();
   } else {
     sendMessage();
   }
@@ -385,6 +440,7 @@ clearBtn.addEventListener("click", () => {
   toolElements  = {};
   lastToolEl    = null;
   lastToolName  = null;
+  progressEl    = null;
   chrome.runtime.sendMessage({ type: "CLEAR_HISTORY" }).catch(() => {});
   showWelcome();
 });

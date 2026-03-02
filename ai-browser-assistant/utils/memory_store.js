@@ -23,8 +23,8 @@ export class MemoryStore {
     const key = `history_${tabId}`;
     const history = await this.getSession(key) || [];
     history.push({ ...message, timestamp: Date.now() });
-    // Keep last 20 messages to avoid context overflow
-    await this.setSession(key, history.slice(-20));
+    // Keep last 60 messages to support longer agentic tasks
+    await this.setSession(key, history.slice(-60));
   }
 
   async getHistory(tabId) {

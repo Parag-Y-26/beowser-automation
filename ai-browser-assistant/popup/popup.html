@@ -191,7 +191,7 @@
         </option>
       </optgroup>
       <!-- ── NVIDIA NIM ────────────────────────────────────── -->
-      <optgroup label="⚡ NVIDIA NIM">
+      <optgroup label="⚡ NVIDIA NIM — Llama">
         <option value="meta/llama-3.3-70b-instruct">
           Llama 3.3 70B — Best NIM reasoning ⭐
         </option>
@@ -206,6 +206,28 @@
         </option>
         <option value="nvidia/llama-3.1-nemotron-70b-instruct">
           Nemotron 70B — Deep NIM reasoning
+        </option>
+      </optgroup>
+      <optgroup label="⚡ NVIDIA NIM — Kimi (Moonshot)">
+        <option value="moonshotai/kimi-k2-thinking">
+          Kimi K2 Thinking — 1T MoE, 256K ctx, agentic powerhouse
+        </option>
+        <option value="moonshotai/kimi-k2.5">
+          Kimi K2.5 — Multimodal vision + agentic
+        </option>
+        <option value="moonshotai/kimi-k2-instruct">
+          Kimi K2 Instruct — Strong reasoning + coding
+        </option>
+        <option value="moonshotai/kimi-k2-instruct-0905">
+          Kimi K2 Instruct 0905 — Long context + enhanced
+        </option>
+      </optgroup>
+      <optgroup label="⚡ NVIDIA NIM — MiniMax">
+        <option value="minimaxai/minimax-m2.5">
+          MiniMax M2.5 — Latest, coding + reasoning + tools
+        </option>
+        <option value="minimaxai/minimax-m2.1">
+          MiniMax M2.1 — Agentic + office tasks
         </option>
       </optgroup>
       <!-- ── Local Ollama ──────────────────────────────────── -->
@@ -240,7 +262,7 @@
         </option>
       </optgroup>
       <!-- ── NVIDIA NIM ────────────────────────────────────── -->
-      <optgroup label="⚡ NVIDIA NIM">
+      <optgroup label="⚡ NVIDIA NIM — Llama">
         <option value="meta/llama-3.2-90b-vision-instruct">
           Llama 3.2 90B Vision — Best NIM VLM ⭐
         </option>
@@ -252,6 +274,23 @@
         </option>
         <option value="meta/llama-4-maverick-17b-128e-instruct">
           Llama 4 Maverick — Unified premium
+        </option>
+      </optgroup>
+      <optgroup label="⚡ NVIDIA NIM — Kimi + MiniMax">
+        <option value="moonshotai/kimi-k2.5">
+          Kimi K2.5 — Native multimodal agentic
+        </option>
+        <option value="moonshotai/kimi-k2-instruct">
+          Kimi K2 Instruct — Reasoning + coding
+        </option>
+        <option value="moonshotai/kimi-k2-instruct-0905">
+          Kimi K2 Instruct 0905 — Enhanced
+        </option>
+        <option value="minimaxai/minimax-m2.5">
+          MiniMax M2.5 — Vision + reasoning
+        </option>
+        <option value="minimaxai/minimax-m2.1">
+          MiniMax M2.1 — Vision + office tasks
         </option>
       </optgroup>
       <!-- ── Local Ollama ──────────────────────────────────── -->
@@ -276,6 +315,16 @@
       <option value="2048">2048 — Long tasks</option>
       <option value="4096">4096 — Very long</option>
     </select>
+  </div>
+
+  <div class="field">
+    <label class="field-label">Max Agent Steps (Iterations)</label>
+    <select id="max-iterations">
+      <option value="15">15 — Quick tasks</option>
+      <option value="25">25 — Medium tasks</option>
+      <option value="50" selected>50 — Long agentic tasks ⭐</option>
+    </select>
+    <div class="hint">Higher = longer multi-step tasks (like Claude). Each tool call = 1 step.</div>
   </div>
 
   <div class="field">

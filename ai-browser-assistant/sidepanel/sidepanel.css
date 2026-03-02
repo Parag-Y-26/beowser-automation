@@ -475,6 +475,39 @@ body {
   background: rgba(239,68,68,0.07);
 }
 
+/* ── PROGRESS INDICATOR ────────────────────────────────── */
+.progress-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  animation: fadeSlideIn 0.22s var(--ease) both;
+}
+
+.progress-bar-track {
+  flex: 1;
+  height: 4px;
+  background: var(--marble-vein);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--turq), var(--turq-deep));
+  border-radius: var(--radius-full);
+  transition: width 0.4s var(--ease);
+  box-shadow: 0 0 8px rgba(11,197,234,0.4);
+}
+
+.progress-text {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--turq-deep);
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+
 /* ── KEYFRAMES ──────────────────────────────────────────── */
 @keyframes fadeSlideIn {
   from { opacity: 0; transform: translateY(7px);  }

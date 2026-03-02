@@ -29,6 +29,16 @@ export const NIM_MODELS = {
   REASONING_DEEP:     "nvidia/llama-3.1-nemotron-70b-instruct",
   VISION_DEEP:        "meta/llama-3.2-90b-vision-instruct",
 
+  // ── NIM — Kimi (Moonshot AI) ─────────────────────────────
+  NIM_KIMI_K2_THINKING:    "moonshotai/kimi-k2-thinking",
+  NIM_KIMI_K2_5:           "moonshotai/kimi-k2.5",
+  NIM_KIMI_K2_INSTRUCT:    "moonshotai/kimi-k2-instruct",
+  NIM_KIMI_K2_INSTRUCT_09: "moonshotai/kimi-k2-instruct-0905",
+
+  // ── NIM — MiniMax ────────────────────────────────────────
+  NIM_MINIMAX_M2_5:     "minimaxai/minimax-m2.5",
+  NIM_MINIMAX_M2_1:     "minimaxai/minimax-m2.1",
+
   // ── NIM — Local Ollama ───────────────────────────────────
   LOCAL_LLAMA3:       "ollama/llama3",
   LOCAL_MISTRAL:      "ollama/mistral",

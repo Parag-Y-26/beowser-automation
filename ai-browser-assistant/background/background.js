@@ -103,6 +103,9 @@ async function cdpKeyPress(tabId, key, modifiers = 0) {
 // ═══ SCREENSHOT CACHE ═══════════════════════════════════════════
 let _lastScreenshotB64 = null, _lastScreenshotTabId = null;
 
+// ═══ AGENT CANCELLATION ═════════════════════════════════════════
+let _agentAbortController = null;
+
 // ═══ BROWSER TOOLS SCHEMA ═══════════════════════════════════════
 const BROWSER_TOOLS = [
   { type:"function", function:{ name:"read_page", description:"Read the current page. Always call this first. Returns element indices, text, hrefs, AND centerX/centerY coordinates for CDP clicks.", parameters:{ type:"object", properties:{} } } },
@@ -120,6 +123,7 @@ const BROWSER_TOOLS = [
   { type:"function", function:{ name:"cdp_click", description:"Click at EXACT coordinates using real hardware mouse (CDP). PREFERRED for YouTube, React, shadow DOM, canvas, or when click_element fails. Get x/y from centerX/centerY in read_page.", parameters:{ type:"object", properties:{ x:{type:"number",description:"centerX from read_page"}, y:{type:"number",description:"centerY from read_page"}, description:{type:"string"} }, required:["x","y"] } } },
   { type:"function", function:{ name:"cdp_type", description:"Type text using real keyboard (CDP). Use for YouTube search, Google search, React inputs, or when other typing fails.", parameters:{ type:"object", properties:{ text:{type:"string"}, selector:{type:"string",description:"CSS selector to focus first"}, delay_ms:{type:"integer"} }, required:["text"] } } },
   { type:"function", function:{ name:"cdp_key", description:"Press a special key using real keyboard (CDP). Works everywhere.", parameters:{ type:"object", properties:{ key:{type:"string",enum:["Enter","Tab","Escape","ArrowDown","ArrowUp","ArrowLeft","ArrowRight","Backspace","Delete"," ","Home","End","PageDown","PageUp"]}, modifiers:{type:"array",items:{type:"string",enum:["Alt","Ctrl","Meta","Shift"]}} }, required:["key"] } } },
+  { type:"function", function:{ name:"task_complete", description:"Call this when you have fully completed the user's task. Provide a final summary.", parameters:{ type:"object", properties:{ summary:{type:"string",description:"Final summary of what was accomplished"} }, required:["summary"] } } },
 ];
 
 // ═══ SYSTEM PROMPT ═══════════════════════════════════════════════
@@ -130,15 +134,22 @@ RULES:
 2. After navigation, call wait(1000-2000) then read_page.
 3. Be concise — 1-2 sentences before each action.
 4. Use element_index from read_page when possible.
-5. Execute multi-step tasks one step at a time.
-6. Summarize when complete.
-7. Explain clearly if blocked (captcha, login, etc.).
+5. Execute multi-step tasks one step at a time, and KEEP GOING until fully done.
+6. Call task_complete with a summary when the entire task is finished.
+7. Explain clearly if blocked (captcha, login, etc.)
 8. Never submit forms without user confirmation.
 9. Use capture_screenshot + analyze_screenshot when DOM is insufficient.
 10. Prefer cdp_type over fill_form/type_text for search boxes and React inputs.
 11. ALWAYS use cdp_click instead of click_element for: YouTube, React apps, shadow DOM, or after click_element fails. Get x/y from centerX/centerY in read_page.
 12. ALWAYS use cdp_type instead of fill_form/type_text for: YouTube search, Google search, or when typing failed before.
 13. For YouTube: read_page → find video centerX/centerY → cdp_click(x, y). Do NOT use click_element for YouTube thumbnails.
+
+MULTI-STEP PERSISTENCE:
+- You have up to 50 tool-call rounds. Use them wisely.
+- Continue working until the task is FULLY complete, then call task_complete.
+- If an action fails, try an alternative approach (different selector, CDP instead of DOM, scroll to reveal elements, etc.)
+- After each major step (navigation, click, form fill), briefly state what you did and what's next.
+- Do NOT stop early. Do NOT say "task may be incomplete". Keep going.
 
 SAFETY: No destructive actions without confirmation. No payment info. Stop and ask if unsure.`;
 
@@ -157,13 +168,86 @@ function makeBroadcaster(pane) {
   return (update) => { const { type:t, ...p } = update; chrome.runtime.sendMessage({ type:"AGENT_UPDATE", targetPane:pane, event:t, ...p }).catch(()=>{}); };
 }
 
+// ═══ CONTEXT WINDOW MANAGEMENT ══════════════════════════════════
+// Prune old messages to stay within token limits.
+// Keeps: system context (first user msg), last N messages, and
+// compresses old tool results into a compact checkpoint summary.
+function pruneMessages(messages, keepRecent = 20) {
+  if (messages.length <= keepRecent + 2) return messages;
+
+  // Find the first user message (always keep)
+  const firstUserIdx = messages.findIndex(m => m.role === "user");
+  const firstUser = firstUserIdx >= 0 ? messages[firstUserIdx] : null;
+
+  // Messages to compress (everything between first user and the tail)
+  const tail = messages.slice(-keepRecent);
+  const toCompress = messages.slice(firstUserIdx + 1, messages.length - keepRecent);
+
+  if (toCompress.length === 0) return messages;
+
+  // Build a compact summary of compressed messages
+  const actions = [];
+  for (const m of toCompress) {
+    if (m.role === "assistant" && m.content) {
+      actions.push(`Assistant: ${m.content.slice(0, 100)}`);
+    }
+    if (m.role === "tool") {
+      try {
+        const parsed = JSON.parse(m.content);
+        if (parsed.success !== undefined) {
+          const toolSummary = parsed.action || parsed.navigated_to || parsed.title || "done";
+          actions.push(`Tool result: ${parsed.success ? "✓" : "✗"} ${toolSummary}`);
+        }
+      } catch { actions.push("Tool result: (data)"); }
+    }
+  }
+
+  const checkpoint = {
+    role: "user",
+    content: `[CONTEXT CHECKPOINT — ${toCompress.length} messages compressed]\nPrevious actions taken:\n${actions.slice(-15).join("\n")}\n\nContinue from where you left off. The recent messages below show your latest state.`
+  };
+
+  const pruned = [];
+  if (firstUser) pruned.push(firstUser);
+  pruned.push(checkpoint);
+  pruned.push(...tail);
+  return pruned;
+}
+
+// ═══ STALL DETECTION ════════════════════════════════════════════
+// Detects if the model is stuck in a loop (e.g., calling read_page
+// repeatedly without taking any action).
+function detectStall(recentTools, windowSize = 4) {
+  if (recentTools.length < windowSize) return null;
+  const last = recentTools.slice(-windowSize);
+
+  // Check if all recent calls are the same tool (e.g., all read_page)
+  const allSame = last.every(t => t === last[0]);
+  if (allSame && last[0] === "read_page") {
+    return `You have called read_page ${windowSize} times in a row without taking any action. The page content hasn't changed. Please either: (1) take an action like click, type, or navigate, (2) try scrolling to reveal more content, (3) use capture_screenshot + analyze_screenshot to visually inspect the page, or (4) explain what is blocking you.`;
+  }
+
+  // Check for read_page → read_page → read_page pattern (interspersed with wait)
+  const readPageCount = last.filter(t => t === "read_page" || t === "wait").length;
+  if (readPageCount >= windowSize - 1) {
+    return `You seem to be stuck in a loop of reading the page and waiting. Try a different approach: use CDP tools, scroll, or analyze a screenshot.`;
+  }
+
+  return null;
+}
+
 // ═══ AGENT LOOP ═════════════════════════════════════════════════
 async function runAgentLoop(userMessage, tabId, broadcast, overrideModel) {
+  // Create abort controller for this run
+  _agentAbortController = new AbortController();
+  const abortSignal = _agentAbortController.signal;
+
   try {
     _lastScreenshotB64 = null; _lastScreenshotTabId = null;
-    const stored = await chrome.storage.sync.get(["nimApiKey","ollamaCloudApiKey","nimReasoningModel","nimVisionModel","nimMaxTokens","confirmForms","confirmNav"]);
+    const stored = await chrome.storage.sync.get(["nimApiKey","ollamaCloudApiKey","nimReasoningModel","nimVisionModel","nimMaxTokens","nimMaxIterations","confirmForms","confirmNav"]);
     const nimApiKey = stored.nimApiKey, ollamaCloudApiKey = stored.ollamaCloudApiKey || "";
     const nimMaxTokens = stored.nimMaxTokens || 1024, confirmForms = stored.confirmForms, confirmNav = stored.confirmNav;
+    const maxIterations = stored.nimMaxIterations || 50;
 
     function resolveApiKey(m) { if (m.startsWith("ollama-cloud/")) return ollamaCloudApiKey; if (m.startsWith("ollama/")) return "ollama"; return nimApiKey; }
 
@@ -186,18 +270,48 @@ async function runAgentLoop(userMessage, tabId, broadcast, overrideModel) {
 
     const history = await memory.getHistory(tabId);
     await memory.appendToHistory(tabId, { role:"user", content:userMessage });
-    const messages = [...history, { role:"user", content:userMessage }];
+    let messages = [...history, { role:"user", content:userMessage }];
     let iterations = 0;
+    let consecutiveErrors = 0;
+    const recentToolNames = [];  // For stall detection
     broadcast({ type:"thinking" });
 
-    while (iterations < 15) {
+    while (iterations < maxIterations) {
+      // Check if cancelled
+      if (abortSignal.aborted) {
+        broadcast({ type:"done", text:"⏹️ Task stopped by user." });
+        return;
+      }
+
       iterations++;
+
+      // Broadcast progress to side panel
+      broadcast({ type:"progress", step:iterations, maxSteps:maxIterations });
+
+      // Prune context if getting too long
+      messages = pruneMessages(messages, 24);
+
       let responseText = "", tool_calls = [];
       try {
         const result = await callNIM({ apiKey:resolveApiKey(reasoningModel), model:reasoningModel, messages, tools:BROWSER_TOOLS, systemPrompt:enhancedSystem, maxTokens:nimMaxTokens, onChunk:(c)=>{ responseText+=c; broadcast({type:"stream_chunk",chunk:c}); } });
         tool_calls = result.tool_calls;
         if (result.text && !responseText) responseText = result.text;
-      } catch (err) { broadcast({ type:"error", message:`API error: ${err.message}` }); return; }
+        consecutiveErrors = 0;  // Reset on success
+      } catch (err) {
+        consecutiveErrors++;
+        if (consecutiveErrors >= 3) {
+          broadcast({ type:"error", message:`API error (3 consecutive failures): ${err.message}` });
+          return;
+        }
+        // Retry with pruned context on token overflow
+        if (err.message.includes("400") || err.message.includes("context") || err.message.includes("token")) {
+          messages = pruneMessages(messages, 12);
+          broadcast({ type:"stream_chunk", chunk:"\n⚡ Context trimmed, retrying...\n" });
+          continue;
+        }
+        broadcast({ type:"error", message:`API error: ${err.message}` });
+        return;
+      }
 
       const aMsg = { role:"assistant", content:responseText||null };
       if (tool_calls.length > 0) aMsg.tool_calls = tool_calls.map(tc => ({ id:tc.id, type:"function", function:{ name:tc.function.name, arguments:JSON.stringify(tc.function.arguments) } }));
@@ -205,7 +319,27 @@ async function runAgentLoop(userMessage, tabId, broadcast, overrideModel) {
       if (tool_calls.length === 0) { broadcast({ type:"done", text:responseText }); return; }
 
       for (const tc of tool_calls) {
+        // Check cancellation between tool calls
+        if (abortSignal.aborted) {
+          broadcast({ type:"done", text:"⏹️ Task stopped by user." });
+          return;
+        }
+
         const toolName = tc.function.name, toolArgs = tc.function.arguments;
+
+        // ── task_complete tool — agent signals it's done ──
+        if (toolName === "task_complete") {
+          const summary = toolArgs.summary || "Task completed.";
+          broadcast({ type:"stream_chunk", chunk: summary });
+          broadcast({ type:"done", text: summary });
+          const tm = { role:"tool", tool_call_id:tc.id, content:JSON.stringify({ success:true, message:"Task marked complete." }) };
+          messages.push(tm); await memory.appendToHistory(tabId, tm);
+          return;
+        }
+
+        // Track tool names for stall detection
+        recentToolNames.push(toolName);
+
         broadcast({ type:"tool_start", tool:toolName, args:toolArgs });
         let toolResult;
 
@@ -310,9 +444,20 @@ async function runAgentLoop(userMessage, tabId, broadcast, overrideModel) {
         const tm = { role:"tool", tool_call_id:tc.id, content:JSON.stringify(toolResult) };
         messages.push(tm); await memory.appendToHistory(tabId, tm);
       }
+
+      // ── Stall detection — inject nudge if stuck ──
+      const stallMsg = detectStall(recentToolNames, 4);
+      if (stallMsg) {
+        const nudge = { role:"user", content: stallMsg };
+        messages.push(nudge);
+        recentToolNames.length = 0;  // Reset after nudge
+      }
     }
-    broadcast({ type:"error", message:"⚠️ Maximum iterations reached." });
+
+    // Reached max iterations — but give a friendlier message
+    broadcast({ type:"error", message:`⚠️ Reached ${maxIterations} steps. The task may need to be continued. Type "continue" to keep going from where I left off.` });
   } catch (topErr) { console.error("[Agent] FATAL:", topErr); broadcast({ type:"error", message:"❌ Agent error: "+topErr.message }); }
+  finally { _agentAbortController = null; }
 }
 
 // ═══ KEYBOARD SHORTCUT ══════════════════════════════════════════
@@ -330,6 +475,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
     sendResponse({ started:true }); return true;
   }
+  if (message.type === "STOP_AGENT") {
+    if (_agentAbortController) { _agentAbortController.abort(); }
+    sendResponse({ stopped:true }); return true;
+  }
   if (message.type === "CLEAR_HISTORY") {
     chrome.tabs.query({ active:true, currentWindow:true }, ([tab]) => { if (tab) memory.clearHistory(tab.id); });
     sendResponse({ cleared:true }); return true;
@@ -340,4 +489,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-console.log("[Agent] Background started (NIM + Ollama Cloud + Local + CDP)");
+console.log("[Agent] Background started (NIM + Ollama Cloud + Local + CDP + Robust Loop v2)");

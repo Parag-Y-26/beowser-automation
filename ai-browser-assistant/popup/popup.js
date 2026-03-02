@@ -41,7 +41,8 @@ chrome.storage.sync.get(
   [
     "nimApiKey", "ollamaCloudApiKey",
     "nimReasoningModel", "nimVisionModel",
-    "nimMaxTokens", "confirmForms", "confirmNav",
+    "nimMaxTokens", "nimMaxIterations",
+    "confirmForms", "confirmNav",
   ],
   (data) => {
     if (data.nimApiKey) document.getElementById("api-key").value = data.nimApiKey;
@@ -49,6 +50,7 @@ chrome.storage.sync.get(
     if (data.nimReasoningModel) document.getElementById("reasoning-model-select").value = data.nimReasoningModel;
     if (data.nimVisionModel) document.getElementById("vision-model-select").value = data.nimVisionModel;
     if (data.nimMaxTokens) document.getElementById("max-tokens").value = data.nimMaxTokens;
+    if (data.nimMaxIterations) document.getElementById("max-iterations").value = data.nimMaxIterations;
     document.getElementById("confirm-forms").checked = data.confirmForms !== false;
     document.getElementById("confirm-nav").checked = data.confirmNav === true;
     updateModelStatus();
@@ -64,6 +66,7 @@ document.getElementById("save-btn").addEventListener("click", () => {
     nimReasoningModel: document.getElementById("reasoning-model-select").value,
     nimVisionModel: document.getElementById("vision-model-select").value,
     nimMaxTokens: parseInt(document.getElementById("max-tokens").value),
+    nimMaxIterations: parseInt(document.getElementById("max-iterations").value),
     confirmForms: document.getElementById("confirm-forms").checked,
     confirmNav: document.getElementById("confirm-nav").checked,
   };
