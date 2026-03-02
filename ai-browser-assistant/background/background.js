@@ -145,32 +145,68 @@ const BROWSER_TOOLS = [
   { type:"function", function:{ name:"task_complete", description:"Call this when you have fully completed the user's task. Provide a final summary.", parameters:{ type:"object", properties:{ summary:{type:"string",description:"Final summary of what was accomplished"} }, required:["summary"] } } },
 ];
 
-// ═══ SYSTEM PROMPT ═══════════════════════════════════════════════
-const SYSTEM_PROMPT = `You are an intelligent browser assistant. You control web pages using real mouse & keyboard events (CDP) for maximum compatibility.
+// ═══ SYSTEM PROMPT — ReAct Architecture ═════════════════════════
+const SYSTEM_PROMPT = `You are an intelligent browser automation agent. You follow a strict THINK → ACT → OBSERVE cycle.
 
-RULES:
-1. Always call read_page FIRST before any action.
-2. After navigation, call wait(1000-2000) then read_page.
-3. Be concise — 1-2 sentences before each action.
-4. Use element_index from read_page when possible.
-5. Execute multi-step tasks one step at a time, and KEEP GOING until fully done.
-6. Call task_complete with a summary when the entire task is finished.
-7. Explain clearly if blocked (captcha, login, etc.)
-8. Never submit forms without user confirmation.
-9. Use capture_screenshot + analyze_screenshot when DOM is insufficient.
-10. Prefer cdp_type over fill_form/type_text for search boxes and React inputs.
-11. ALWAYS use cdp_click instead of click_element for: YouTube, React apps, shadow DOM, or after click_element fails. Get x/y from centerX/centerY in read_page.
-12. ALWAYS use cdp_type instead of fill_form/type_text for: YouTube search, Google search, or when typing failed before.
-13. For YouTube: read_page → find video centerX/centerY → cdp_click(x, y). Do NOT use click_element for YouTube thumbnails.
+## HOW YOU WORK (ReAct Loop)
 
-MULTI-STEP PERSISTENCE:
-- You have up to 50 tool-call rounds. Use them wisely.
-- Continue working until the task is FULLY complete, then call task_complete.
-- If an action fails, try an alternative approach (different selector, CDP instead of DOM, scroll to reveal elements, etc.)
-- After each major step (navigation, click, form fill), briefly state what you did and what's next.
-- Do NOT stop early. Do NOT say "task may be incomplete". Keep going.
+Every turn, you must:
 
-SAFETY: No destructive actions without confirmation. No payment info. Stop and ask if unsure.`;
+1. **THINK** (1-2 sentences): Analyze what you see, what happened, and decide the ONE next action.
+2. **ACT**: Call exactly ONE tool. Never call multiple tools at once.
+3. **OBSERVE**: You will receive the tool result. Use it to decide the next step.
+
+Example response format:
+I can see the search results page with 10 items. The first result "iPhone 16 Pro Max" is at position (450, 320). I'll click on it.
+[Then call cdp_click with x=450, y=320]
+
+## CRITICAL RULES
+
+1. Call read_page FIRST before any action to understand the page.
+2. Call exactly ONE tool per turn. Wait for its result before deciding the next action.
+3. After navigation or clicking, call wait(1500) then read_page to see the new state.
+4. NEVER output raw function call syntax as text. Use the tool-calling API only.
+5. NEVER output JSON, code blocks, or tool schemas in your text response.
+6. Use element_index from read_page when possible.
+7. If an action fails, try a different approach (different selector, CDP tools, scroll first, etc.)
+8. Call task_complete with a summary ONLY when the entire task is done.
+9. Do NOT stop early. Keep going until the task is fully complete.
+
+## TOOL PREFERENCES
+
+- Prefer cdp_click over click_element for: YouTube, Amazon, React apps, shadow DOM, or any complex site.
+- Prefer cdp_type over fill_form/type_text for: search boxes, Google/YouTube inputs, React inputs.
+- Get coordinates from centerX/centerY in read_page output.
+- For YouTube: read_page → find video centerX/centerY → cdp_click(x, y).
+
+## ANTI-LOOP RULES
+
+- After typing, do NOT type the same text again. Move to the next step.
+- If you already navigated to a URL, do NOT navigate there again.
+- If you clicked something and it didn't work, try a DIFFERENT approach (scroll, use CDP, etc.)
+- Count how many times you've done the same action. If ≥ 2 times, switch strategy.
+
+SAFETY: Never submit forms without confirmation. No payment info. Stop and explain if blocked.`;
+
+// ═══ RESPONSE SANITIZER ═════════════════════════════════════════
+// Strip leaked tool-call tokens that some models output as visible text.
+function sanitizeResponse(text) {
+  if (!text) return "";
+  let clean = text;
+  // Remove <|tool_call_begin|> ... <|tool_call_end|> blocks
+  clean = clean.replace(/<\|tool_call[s_]*(?:begin|end|section_end|argument_begin)\|>/g, "");
+  // Remove functions.tool_name:N{...} patterns
+  clean = clean.replace(/functions\.[\w_]+(?::\d+)?\s*\{[^}]*\}/g, "");
+  // Remove raw JSON tool call arrays [{'type': 'text', 'text': '...'}]
+  clean = clean.replace(/\[\{\s*['"]type['"]\s*:\s*['"]text['"].*?\}\]/gs, "");
+  // Remove stray tool_calls_section markers
+  clean = clean.replace(/<\|tool_calls_section_end\|>/g, "");
+  // Remove orphaned JSON fragments from tool calls
+  clean = clean.replace(/\{\s*"(?:name|function)"\s*:\s*"\w+"\s*,\s*"arguments"\s*:.*?\}/gs, "");
+  // Collapse multiple newlines
+  clean = clean.replace(/\n{3,}/g, "\n\n");
+  return clean.trim();
+}
 
 // ═══ HELPERS ═════════════════════════════════════════════════════
 async function askUserPermission(nid, message) {
@@ -351,18 +387,22 @@ async function runAgentLoop(userMessage, tabId, broadcast, overrideModel) {
       messages = pruneMessages(messages, 24);
 
       let responseText = "", tool_calls = [];
+      let rawChunks = ""; // Collect raw response for sanitization
       try {
-        const result = await callNIM({ apiKey:resolveApiKey(reasoningModel), model:reasoningModel, messages, tools:BROWSER_TOOLS, systemPrompt:enhancedSystem, maxTokens:nimMaxTokens, onChunk:(c)=>{ responseText+=c; broadcast({type:"stream_chunk",chunk:c}); } });
+        const result = await callNIM({ apiKey:resolveApiKey(reasoningModel), model:reasoningModel, messages, tools:BROWSER_TOOLS, systemPrompt:enhancedSystem, maxTokens:nimMaxTokens, onChunk:(c)=>{ rawChunks+=c; } });
         tool_calls = result.tool_calls;
-        if (result.text && !responseText) responseText = result.text;
-        consecutiveErrors = 0;  // Reset on success
+        responseText = rawChunks || result.text || "";
+        // Sanitize before displaying — strip leaked tool tokens
+        const cleanText = sanitizeResponse(responseText);
+        if (cleanText) broadcast({type:"stream_chunk", chunk: cleanText});
+        responseText = cleanText;
+        consecutiveErrors = 0;
       } catch (err) {
         consecutiveErrors++;
         if (consecutiveErrors >= 3) {
           broadcast({ type:"error", message:`API error (3 consecutive failures): ${err.message}` });
           return;
         }
-        // Retry with pruned context on token overflow
         if (err.message.includes("400") || err.message.includes("context") || err.message.includes("token")) {
           messages = pruneMessages(messages, 12);
           broadcast({ type:"stream_chunk", chunk:"\n⚡ Context trimmed, retrying...\n" });
@@ -372,14 +412,12 @@ async function runAgentLoop(userMessage, tabId, broadcast, overrideModel) {
         return;
       }
 
-      // ── Parse text-based tool calls (some models output these as raw text) ──
-      if (tool_calls.length === 0 && responseText) {
-        const parsed = parseTextToolCalls(responseText);
+      // ── Parse text-based tool calls (some models output as raw text) ──
+      if (tool_calls.length === 0 && rawChunks) {
+        const parsed = parseTextToolCalls(rawChunks);
         if (parsed.length > 0) {
-          tool_calls = parsed;
-          // Strip tool call text from displayed response
-          responseText = responseText.replace(/<\|tool_call_begin\|>[\s\S]*?(<\|tool_call_end\|>|$)/g, "").trim();
-          responseText = responseText.replace(/```json\s*\{[\s\S]*?```/g, "").trim();
+          // ONE-TOOL-PER-TURN: only execute the first parsed tool call
+          tool_calls = [parsed[0]];
         }
       }
 
@@ -543,6 +581,15 @@ async function runAgentLoop(userMessage, tabId, broadcast, overrideModel) {
         } catch (err) { toolResult = { success:false, error:err.message }; broadcast({ type:"tool_error", tool:toolName, error:err.message }); }
         const tm = { role:"tool", tool_call_id:tc.id, content:JSON.stringify(toolResult) };
         messages.push(tm); await memory.appendToHistory(tabId, tm);
+
+        // ── OBSERVATION INJECTION — tell model what happened ──
+        const obsSuccess = toolResult?.success !== false;
+        const obsSummary = toolResult?.action || toolResult?.navigated_to || toolResult?.title || toolResult?.typed || toolResult?.analysis || (obsSuccess ? "completed" : toolResult?.error || "failed");
+        const observation = {
+          role: "user",
+          content: `[OBSERVATION] Tool "${toolName}" result: ${obsSuccess ? "✓ SUCCESS" : "✗ FAILED"} — ${typeof obsSummary === 'string' ? obsSummary.slice(0, 200) : JSON.stringify(obsSummary).slice(0, 200)}\n\nTHINK about what happened. Then call exactly ONE tool for your next action. If the task is complete, call task_complete.`
+        };
+        messages.push(observation);
       }
 
       // ── Stall detection — inject nudge if stuck ──
@@ -550,7 +597,7 @@ async function runAgentLoop(userMessage, tabId, broadcast, overrideModel) {
       if (stallMsg) {
         const nudge = { role:"user", content: stallMsg };
         messages.push(nudge);
-        recentToolNames.length = 0;  // Reset after nudge
+        recentToolNames.length = 0;
       }
     }
 
@@ -589,4 +636,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-console.log("[Agent] Background started (NIM + Ollama Cloud + Local + CDP + Robust Loop v2)");
+console.log("[Agent] Background started (NIM + Ollama Cloud + Local + CDP + ReAct v3)");
