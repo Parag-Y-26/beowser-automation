@@ -255,6 +255,45 @@ function detectStall(recentTools, windowSize = 4) {
   return null;
 }
 
+// ═══ TEXT-BASED TOOL CALL PARSER ════════════════════════════════
+// Some models (Kimi, etc.) output tool calls as raw text tokens
+// like <|tool_call_begin|>functions.toolname:N<|tool_call_argument_begin|>{...}
+// instead of using structured API tool_calls. Parse them here.
+function parseTextToolCalls(text) {
+  const parsed = [];
+  
+  // Pattern 1: <|tool_call_begin|>functions.NAME<|tool_call_argument_begin|>{JSON}<|tool_call_end|>
+  const tagPattern = /<\|tool_call_begin\|>\s*functions?\.?(\w+)(?::\d+)?\s*<\|tool_call_argument_begin\|>\s*(\{[\s\S]*?\})\s*(?:<\|tool_call_end\|>)?/g;
+  let match;
+  while ((match = tagPattern.exec(text)) !== null) {
+    try {
+      const args = JSON.parse(match[2]);
+      parsed.push({
+        id: `text_call_${Date.now()}_${parsed.length}`,
+        type: "function",
+        function: { name: match[1], arguments: args }
+      });
+    } catch (e) { /* skip malformed */ }
+  }
+  
+  // Pattern 2: {"name": "tool_name", "arguments": {...}} in text
+  if (parsed.length === 0) {
+    const jsonPattern = /\{\s*"name"\s*:\s*"(\w+)"\s*,\s*"arguments"\s*:\s*(\{[\s\S]*?\})\s*\}/g;
+    while ((match = jsonPattern.exec(text)) !== null) {
+      try {
+        const args = JSON.parse(match[2]);
+        parsed.push({
+          id: `text_call_${Date.now()}_${parsed.length}`,
+          type: "function",
+          function: { name: match[1], arguments: args }
+        });
+      } catch (e) { /* skip */ }
+    }
+  }
+  
+  return parsed;
+}
+
 // ═══ AGENT LOOP ═════════════════════════════════════════════════
 async function runAgentLoop(userMessage, tabId, broadcast, overrideModel) {
   // Create abort controller for this run
@@ -292,6 +331,7 @@ async function runAgentLoop(userMessage, tabId, broadcast, overrideModel) {
     let messages = [...history, { role:"user", content:userMessage }];
     let iterations = 0;
     let consecutiveErrors = 0;
+    let consecutiveTextOnly = 0;  // Track text-only responses for exit detection
     const recentToolNames = [];  // For stall detection
     broadcast({ type:"thinking" });
 
@@ -332,10 +372,51 @@ async function runAgentLoop(userMessage, tabId, broadcast, overrideModel) {
         return;
       }
 
+      // ── Parse text-based tool calls (some models output these as raw text) ──
+      if (tool_calls.length === 0 && responseText) {
+        const parsed = parseTextToolCalls(responseText);
+        if (parsed.length > 0) {
+          tool_calls = parsed;
+          // Strip tool call text from displayed response
+          responseText = responseText.replace(/<\|tool_call_begin\|>[\s\S]*?(<\|tool_call_end\|>|$)/g, "").trim();
+          responseText = responseText.replace(/```json\s*\{[\s\S]*?```/g, "").trim();
+        }
+      }
+
       const aMsg = { role:"assistant", content:responseText||null };
       if (tool_calls.length > 0) aMsg.tool_calls = tool_calls.map(tc => ({ id:tc.id, type:"function", function:{ name:tc.function.name, arguments:JSON.stringify(tc.function.arguments) } }));
       messages.push(aMsg); await memory.appendToHistory(tabId, aMsg);
-      if (tool_calls.length === 0) { broadcast({ type:"done", text:responseText }); return; }
+
+      // ── Handle text-only responses (no tool calls) ──
+      if (tool_calls.length === 0) {
+        // Check if response indicates task completion (final answer)
+        const lower = (responseText || "").toLowerCase();
+        const isCompletionResponse = /\b(task (is )?complete|done|finished|accomplished|here('s| is) (the |your )?(summary|result))\b/i.test(lower)
+          && !/\b(let me|i('ll| will)|next|now i|going to)\b/i.test(lower);
+
+        if (isCompletionResponse) {
+          broadcast({ type:"done", text:responseText });
+          return;
+        }
+
+        // Model wants to continue but didn't call tools — nudge it
+        consecutiveTextOnly++;
+        if (consecutiveTextOnly >= 3) {
+          // 3 text-only responses in a row = probably stuck, exit gracefully
+          broadcast({ type:"done", text:responseText });
+          return;
+        }
+
+        // Inject continuation nudge
+        messages.push({
+          role: "user",
+          content: "You described what you want to do but didn't call any tools. Please use the available tools (read_page, cdp_click, cdp_type, navigate, etc.) to take the next action. Do NOT describe the action — execute it by calling the tool directly."
+        });
+        continue;
+      }
+
+      // Reset text-only counter when tools are called
+      consecutiveTextOnly = 0;
 
       for (const tc of tool_calls) {
         // Check cancellation between tool calls
