@@ -80,12 +80,31 @@ async function cdpClick(tabId, x, y) {
   await s("Input.dispatchMouseEvent", { type:"mouseReleased", x, y, button:"left", buttons:0, clickCount:1, modifiers:0, pointerType:"mouse" });
 }
 
-async function cdpType(tabId, text, delayMs = 30) {
+async function cdpType(tabId, text, delayMs = 50) {
   if (!await ensureCDPAttached(tabId)) throw new Error("CDP not available for this tab");
   for (const c of text) {
-    await chrome.debugger.sendCommand({ tabId }, "Input.dispatchKeyEvent", { type:"keyDown", key:c, text:c, unmodifiedText:c, modifiers:0, nativeVirtualKeyCode:c.charCodeAt(0), windowsVirtualKeyCode:c.charCodeAt(0) });
+    // keyDown — structural event only, do NOT set `text` (that causes double insertion)
+    await chrome.debugger.sendCommand({ tabId }, "Input.dispatchKeyEvent", {
+      type: "rawKeyDown",
+      key: c,
+      code: c === " " ? "Space" : `Key${c.toUpperCase()}`,
+      windowsVirtualKeyCode: c.charCodeAt(0),
+      nativeVirtualKeyCode: c.charCodeAt(0),
+      modifiers: 0
+    });
+    await sleep(10);
+    // insertText — the ONLY place the character gets inserted
     await chrome.debugger.sendCommand({ tabId }, "Input.insertText", { text: c });
-    await chrome.debugger.sendCommand({ tabId }, "Input.dispatchKeyEvent", { type:"keyUp", key:c, modifiers:0 });
+    await sleep(10);
+    // keyUp — release the key
+    await chrome.debugger.sendCommand({ tabId }, "Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: c,
+      code: c === " " ? "Space" : `Key${c.toUpperCase()}`,
+      windowsVirtualKeyCode: c.charCodeAt(0),
+      nativeVirtualKeyCode: c.charCodeAt(0),
+      modifiers: 0
+    });
     if (delayMs > 0) await sleep(delayMs);
   }
 }
